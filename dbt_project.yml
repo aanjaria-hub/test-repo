@@ -35,5 +35,5 @@ models:
   dbtLearn:
     +materialized: view
     dim:
-     +matrialized: table
+     +materialized: table
 
