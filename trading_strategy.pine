@@ -1,0 +1,169 @@
+//@version=5
+strategy("Advanced Technical Strategy", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=10, commission_type=strategy.commission.percent, commission_value=0.1)
+
+// === INPUT PARAMETERS ===
+// Moving Averages
+ma_fast_length = input.int(9, "Fast MA Length", minval=1)
+ma_slow_length = input.int(21, "Slow MA Length", minval=1)
+ma_type = input.string("EMA", "MA Type", options=["SMA", "EMA", "WMA"])
+
+// RSI Settings
+rsi_length = input.int(14, "RSI Length", minval=1)
+rsi_overbought = input.int(70, "RSI Overbought", minval=50, maxval=100)
+rsi_oversold = input.int(30, "RSI Oversold", minval=0, maxval=50)
+
+// MACD Settings
+macd_fast = input.int(12, "MACD Fast Length", minval=1)
+macd_slow = input.int(26, "MACD Slow Length", minval=1)
+macd_signal = input.int(9, "MACD Signal Length", minval=1)
+
+// Bollinger Bands
+bb_length = input.int(20, "BB Length", minval=1)
+bb_mult = input.float(2.0, "BB Multiplier", minval=0.1, step=0.1)
+
+// Risk Management
+stop_loss_pct = input.float(2.0, "Stop Loss %", minval=0.1, step=0.1)
+take_profit_pct = input.float(4.0, "Take Profit %", minval=0.1, step=0.1)
+use_trailing_stop = input.bool(true, "Use Trailing Stop")
+trailing_stop_pct = input.float(1.5, "Trailing Stop %", minval=0.1, step=0.1)
+
+// Time Filter
+use_time_filter = input.bool(false, "Use Time Filter")
+start_time = input.session("0930-1600", "Trading Session")
+
+// === TECHNICAL INDICATORS ===
+// Moving Averages
+ma_fast = switch ma_type
+    "SMA" => ta.sma(close, ma_fast_length)
+    "EMA" => ta.ema(close, ma_fast_length)
+    "WMA" => ta.wma(close, ma_fast_length)
+    => ta.ema(close, ma_fast_length)
+
+ma_slow = switch ma_type
+    "SMA" => ta.sma(close, ma_slow_length)
+    "EMA" => ta.ema(close, ma_slow_length)
+    "WMA" => ta.wma(close, ma_slow_length)
+    => ta.ema(close, ma_slow_length)
+
+// RSI
+rsi = ta.rsi(close, rsi_length)
+
+// MACD
+[macd_line, signal_line, histogram] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+
+// Bollinger Bands
+[bb_upper, bb_middle, bb_lower] = ta.bb(close, bb_length, bb_mult)
+
+// Volume Moving Average
+vol_ma = ta.sma(volume, 20)
+
+// === SIGNAL CONDITIONS ===
+// Trend Conditions
+uptrend = ma_fast > ma_slow
+downtrend = ma_fast < ma_slow
+ma_cross_up = ta.crossover(ma_fast, ma_slow)
+ma_cross_down = ta.crossunder(ma_fast, ma_slow)
+
+// Momentum Conditions
+rsi_bullish = rsi > 50 and rsi < rsi_overbought
+rsi_bearish = rsi < 50 and rsi > rsi_oversold
+rsi_oversold_bounce = ta.crossover(rsi, rsi_oversold)
+rsi_overbought_drop = ta.crossunder(rsi, rsi_overbought)
+
+// MACD Conditions
+macd_bullish = macd_line > signal_line and histogram > 0
+macd_bearish = macd_line < signal_line and histogram < 0
+macd_cross_up = ta.crossover(macd_line, signal_line)
+macd_cross_down = ta.crossunder(macd_line, signal_line)
+
+// Bollinger Bands Conditions
+bb_squeeze = (bb_upper - bb_lower) / bb_middle < 0.1
+bb_expansion = (bb_upper - bb_lower) / bb_middle > 0.15
+price_near_lower_bb = close < bb_lower * 1.02
+price_near_upper_bb = close > bb_upper * 0.98
+
+// Volume Condition
+high_volume = volume > vol_ma * 1.2
+
+// Time Filter
+in_session = use_time_filter ? time(timeframe.period, start_time) : true
+
+// === ENTRY CONDITIONS ===
+// Long Entry: Multiple confirmations
+long_condition = uptrend and ma_cross_up and rsi_bullish and macd_cross_up and high_volume and in_session
+// Alternative long entry on oversold bounce
+long_condition_alt = uptrend and rsi_oversold_bounce and macd_bullish and price_near_lower_bb and in_session
+
+// Short Entry: Multiple confirmations
+short_condition = downtrend and ma_cross_down and rsi_bearish and macd_cross_down and high_volume and in_session
+// Alternative short entry on overbought drop
+short_condition_alt = downtrend and rsi_overbought_drop and macd_bearish and price_near_upper_bb and in_session
+
+// === STRATEGY EXECUTION ===
+// Long Entries
+if (long_condition or long_condition_alt)
+    strategy.entry("Long", strategy.long)
+
+// Short Entries
+if (short_condition or short_condition_alt)
+    strategy.entry("Short", strategy.short)
+
+// === EXIT CONDITIONS ===
+// Calculate stop loss and take profit levels
+long_stop_loss = strategy.position_avg_price * (1 - stop_loss_pct / 100)
+long_take_profit = strategy.position_avg_price * (1 + take_profit_pct / 100)
+short_stop_loss = strategy.position_avg_price * (1 + stop_loss_pct / 100)
+short_take_profit = strategy.position_avg_price * (1 - take_profit_pct / 100)
+
+// Trailing Stop
+if (use_trailing_stop)
+    strategy.exit("Long Exit", "Long", trail_percent=trailing_stop_pct, trail_points=trailing_stop_pct * close / 100)
+    strategy.exit("Short Exit", "Short", trail_percent=trailing_stop_pct, trail_points=trailing_stop_pct * close / 100)
+else
+    strategy.exit("Long Exit", "Long", stop=long_stop_loss, limit=long_take_profit)
+    strategy.exit("Short Exit", "Short", stop=short_stop_loss, limit=short_take_profit)
+
+// === PLOTTING ===
+// Moving Averages
+plot(ma_fast, color=color.blue, title="Fast MA", linewidth=2)
+plot(ma_slow, color=color.red, title="Slow MA", linewidth=2)
+
+// Bollinger Bands
+p1 = plot(bb_upper, color=color.gray, title="BB Upper")
+p2 = plot(bb_lower, color=color.gray, title="BB Lower")
+fill(p1, p2, color=color.new(color.gray, 90), title="BB Fill")
+
+// Entry Signals
+plotshape(long_condition or long_condition_alt, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, title="Long Signal")
+plotshape(short_condition or short_condition_alt, style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, title="Short Signal")
+
+// === ADDITIONAL INDICATORS SUBPLOT ===
+// RSI
+hline(50, "RSI Mid Line", color=color.gray, linestyle=hline.style_dashed)
+hline(rsi_overbought, "RSI Overbought", color=color.red, linestyle=hline.style_dotted)
+hline(rsi_oversold, "RSI Oversold", color=color.green, linestyle=hline.style_dotted)
+
+// === ALERTS ===
+alertcondition(long_condition or long_condition_alt, title="Long Entry Alert", message="Long entry signal triggered")
+alertcondition(short_condition or short_condition_alt, title="Short Entry Alert", message="Short entry signal triggered")
+
+// === STRATEGY STATISTICS ===
+// Display some key metrics
+var table info_table = table.new(position.top_right, 2, 8, bgcolor=color.white, border_width=1)
+if barstate.islast
+    table.cell(info_table, 0, 0, "Metric", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 1, 0, "Value", text_color=color.black, bgcolor=color.gray)
+    table.cell(info_table, 0, 1, "Total Trades", text_color=color.black)
+    table.cell(info_table, 1, 1, str.tostring(strategy.closedtrades), text_color=color.black)
+    table.cell(info_table, 0, 2, "Win Rate %", text_color=color.black)
+    table.cell(info_table, 1, 2, str.tostring(math.round(strategy.wintrades / strategy.closedtrades * 100, 2)), text_color=color.black)
+    table.cell(info_table, 0, 3, "Profit Factor", text_color=color.black)
+    table.cell(info_table, 1, 3, str.tostring(math.round(strategy.grossprofit / math.abs(strategy.grossloss), 2)), text_color=color.black)
+    table.cell(info_table, 0, 4, "Max Drawdown", text_color=color.black)
+    table.cell(info_table, 1, 4, str.tostring(math.round(strategy.max_drawdown, 2)) + "%", text_color=color.black)
+    table.cell(info_table, 0, 5, "Net Profit", text_color=color.black)
+    table.cell(info_table, 1, 5, str.tostring(math.round(strategy.netprofit, 2)), text_color=color.black)
+    table.cell(info_table, 0, 6, "Avg Trade", text_color=color.black)
+    table.cell(info_table, 1, 6, str.tostring(math.round(strategy.netprofit / strategy.closedtrades, 2)), text_color=color.black)
+    table.cell(info_table, 0, 7, "Current RSI", text_color=color.black)
+    table.cell(info_table, 1, 7, str.tostring(math.round(rsi, 2)), text_color=color.black)
